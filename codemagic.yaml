@@ -98,12 +98,3 @@ workflows:
 
     artifacts:
       - $CM_BUILD_DIR/app-release.apk
-
-    publishing:
-      email:
-        recipients:
-          # set di Codemagic UI -> Environment variables: EMAIL_TO
-          - $EMAIL_TO
-        notify:
-          success: true
-          failure: true
