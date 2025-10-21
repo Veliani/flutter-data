@@ -13,12 +13,10 @@ workflows:
         - $FLUTTER_ROOT/.pub-cache
         - ~/.gradle/caches
         - ~/.gradle/wrapper
-
     scripts:
       - name: Ensure Flutter version
         script: |
           flutter --version
-
       - name: Find & unzip project ZIP
         script: |
           set -e
@@ -32,9 +30,7 @@ workflows:
             echo "No ZIP found in repo root. Upload $ZIP_NAME." >&2
             exit 1
           fi
-          echo "Using ZIP: $ZIP"
           unzip -q "$ZIP" -d extracted
-
           if [ -f "extracted/pubspec.yaml" ]; then
             PUBROOT="extracted"
           else
@@ -46,23 +42,17 @@ workflows:
             PUBROOT="$(dirname "$found")"
           fi
           echo "PUBROOT=$PUBROOT" >> $CM_ENV
-          echo "Resolved PUBROOT=$PUBROOT"
-
       - name: Auto-create Android platform if missing
         script: |
           set -e
           cd "$PUBROOT"
           if [ ! -f android/build.gradle ]; then
-            echo "Android folder missing -> flutter create ."
             flutter create .
           fi
-
       - name: Patch Kotlin/Gradle for Flutter 3.24.x
         script: |
           set -e
           cd "$PUBROOT"
-          echo "🔧 Patching Kotlin & AGP…"
-
           if [ -f android/build.gradle ]; then
             if grep -q 'ext.kotlin_version' android/build.gradle; then
               sed -i.bak 's/ext.kotlin_version *= *".*"/ext.kotlin_version = "1.9.24"/' android/build.gradle || true
@@ -71,9 +61,28 @@ workflows:
               sed -i.bak 's/com\.android\.tools\.build:gradle:[^"]*/com.android.tools.build:gradle:8.5.2/' android/build.gradle || true
             fi
           fi
-
+          mkdir -p android/gradle/wrapper
           echo "distributionBase=GRADLE_USER_HOME" > android/gradle/wrapper/gradle-wrapper.properties
           echo "distributionPath=wrapper/dists" >> android/gradle/wrapper/gradle-wrapper.properties
+          echo "zipStoreBase=GRADLE_USER_HOME" >> android/gradle/wrapper/gradle-wrapper.properties
+          echo "zipStorePath=wrapper/dists" >> android/gradle/wrapper/gradle-wrapper.properties
+          echo "distributionUrl=https://services.gradle.org/distributions/gradle-8.5-bin.zip" >> android/gradle/wrapper/gradle-wrapper.properties
+          touch android/gradle.properties
+          if ! grep -q 'org.gradle.jvmargs' android/gradle.properties; then
+            echo 'org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8' >> android/gradle.properties
+          fi
+      - name: Flutter pub get
+        script: |
+          cd "$PUBROOT"
+          flutter pub get
+      - name: Build APK (release)
+        script: |
+          set -e
+          cd "$PUBROOT"
+          flutter build apk --release
+          cp build/app/outputs/flutter-apk/app-release.apk "$CM_BUILD_DIR/app-release.apk"
+    artifacts:
+      - "$CM_BUILD_DIR/app-release.apk"          echo "distributionPath=wrapper/dists" >> android/gradle/wrapper/gradle-wrapper.properties
           echo "zipStoreBase=GRADLE_USER_HOME" >> android/gradle/wrapper/gradle-wrapper.properties
           echo "zipStorePath=wrapper/dists" >> android/gradle/wrapper/gradle-wrapper.properties
           echo "distributionUrl=https://services.gradle.org/distributions/gradle-8.5-bin.zip" >> android/gradle/wrapper/gradle-wrapper.properties
