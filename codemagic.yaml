@@ -3,9 +3,8 @@ workflows:
     name: Flutter APK from ZIP
     max_build_duration: 60
     environment:
-      flutter: stable  # default channel; kita atur spesifik di skrip juga jika perlu
-      xcode: 15.0  # diabaikan untuk Android
-      java: 17
+      flutter: stable         # Codemagic pakai stable; cukup untuk APK
+      java: 17               # kompatibel AGP 8.x
       vars:
         ZIP_NAME: app.zip
         FLUTTER_VERSION: "3.24.0"
@@ -14,14 +13,12 @@ workflows:
         - $FLUTTER_ROOT/.pub-cache
         - ~/.gradle/caches
         - ~/.gradle/wrapper
+
     scripts:
-      # --- Setup Flutter version yang pasti ---
-      - name: Ensure Flutter $FLUTTER_VERSION
+      - name: Ensure Flutter version
         script: |
-          fvm flutter --version >/dev/null 2>&1 || true
-          # Codemagic sudah include Flutter; kita pastikan versinya cocok
           flutter --version
-          # (Optional) ganti versi:
+          # butuh versi spesifik? aktifkan baris ini:
           # flutter version $FLUTTER_VERSION || true
 
       - name: Find & unzip project ZIP
@@ -40,7 +37,7 @@ workflows:
           echo "Using ZIP: $ZIP"
           unzip -q "$ZIP" -d extracted
 
-          # Resolve PUBROOT (folder yang ada pubspec.yaml)
+          # Resolve PUBROOT (folder berisi pubspec.yaml)
           if [ -f "extracted/pubspec.yaml" ]; then
             PUBROOT="extracted"
           else
@@ -67,13 +64,65 @@ workflows:
         script: |
           set -e
           cd "$PUBROOT"
-          # Patch kotlin version & AGP in android/build.gradle (root)
+          echo "🔧 Patching Kotlin & AGP…"
+
+          # Root build.gradle: kotlin + AGP (BSD-sed safe)
           if [ -f android/build.gradle ]; then
             if grep -q 'ext.kotlin_version' android/build.gradle; then
-              sed -i 's/ext.kotlin_version *= *".*"/ext.kotlin_version = "1.9.24"/' android/build.gradle || true
+              sed -i.bak 's/ext.kotlin_version *= *".*"/ext.kotlin_version = "1.9.24"/' android/build.gradle || true
             fi
             if grep -q 'com.android.tools.build:gradle' android/build.gradle; then
-              sed -i 's/com\.android\.tools\.build:gradle:[^"]*/com.android.tools.build:gradle:8.5.2/' android/build.gradle || true
+              sed -i.bak 's/com\.android\.tools\.build:gradle:[^"]*/com.android.tools.build:gradle:8.5.2/' android/build.gradle || true
+            fi
+          fi
+
+          # Gradle wrapper → 8.5 (tulis ulang langsung, hindari sed error)
+          if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
+            cat > android/gradle/wrapper/gradle-wrapper.properties <<'EOF'
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-8.5-bin.zip
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+EOF
+          fi
+
+          # JVM args aman
+          touch android/gradle.properties
+          if ! grep -q 'org.gradle.jvmargs' android/gradle.properties; then
+            echo 'org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8' >> android/gradle.properties
+          fi
+
+      - name: Flutter pub get
+        script: |
+          cd "$PUBROOT"
+          flutter pub get
+
+      - name: Build APK (release)
+        script: |
+          set -e
+          cd "$PUBROOT"
+          flutter build apk --release
+          cp build/app/outputs/flutter-apk/app-release.apk "$CM_BUILD_DIR/app-release.apk"
+
+      # (Opsional) build AAB:
+      # - name: Build AppBundle (release)
+      #   script: |
+      #     cd "$PUBROOT"
+      #     flutter build appbundle --release
+      #     cp build/app/outputs/bundle/release/app-release.aab "$CM_BUILD_DIR/app-release.aab"
+
+      # (Opsional) build web:
+      # - name: Build Web
+      #   script: |
+      #     cd "$PUBROOT"
+      #     flutter build web
+      #     cd build && zip -r "$CM_BUILD_DIR/web-build.zip" web
+
+    artifacts:
+      - $CM_BUILD_DIR/app-release.apk
+      # - $CM_BUILD_DIR/app-release.aab
+      # - $CM_BUILD_DIR/web-build.zip              sed -i 's/com\.android\.tools\.build:gradle:[^"]*/com.android.tools.build:gradle:8.5.2/' android/build.gradle || true
             fi
           fi
           # gradle wrapper -> 8.5
