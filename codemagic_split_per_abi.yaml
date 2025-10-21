@@ -1,0 +1,82 @@
+workflows:
+  flutter-apk-from-zip:
+    name: Flutter APK from ZIP (split-per-abi)
+    max_build_duration: 60
+    environment:
+      flutter: stable
+      java: 17
+      vars:
+        ZIP_NAME: app.zip
+    cache:
+      cache_paths:
+        - $FLUTTER_ROOT/.pub-cache
+        - ~/.gradle/caches
+        - ~/.gradle/wrapper
+    scripts:
+      - name: Ensure Flutter version
+        script: |
+          flutter --version
+      - name: Find & unzip project ZIP
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR"
+          ZIP="${ZIP_NAME:-app.zip}"
+          if [ ! -f "$ZIP" ]; then
+            ZIP=$(ls -1 *.zip | head -n 1 || true)
+          fi
+          if [ -z "$ZIP" ]; then
+            echo "No ZIP found in repo root." >&2
+            exit 1
+          fi
+          unzip -q "$ZIP" -d extracted
+          if [ -f "extracted/pubspec.yaml" ]; then
+            PUBROOT="extracted"
+          else
+            found=$(find extracted -maxdepth 3 -name pubspec.yaml | head -n 1 || true)
+            [ -z "$found" ] && { echo "pubspec.yaml not found"; exit 1; }
+            PUBROOT="$(dirname "$found")"
+          fi
+          echo "PUBROOT=$PUBROOT" >> $CM_ENV
+      - name: Auto-create Android
+        script: |
+          cd "$PUBROOT"
+          if [ ! -f android/build.gradle ]; then flutter create .; fi
+      - name: Patch Kotlin/Gradle
+        script: |
+          set -e
+          cd "$PUBROOT"
+          if [ -f android/build.gradle ]; then
+            if grep -q 'ext.kotlin_version' android/build.gradle; then
+              sed -i.bak 's/ext.kotlin_version *= *".*"/ext.kotlin_version = "1.9.24"/' android/build.gradle || true
+            fi
+            if grep -q 'com.android.tools.build:gradle' android/build.gradle; then
+              sed -i.bak 's/com\.android\.tools\.build:gradle:[^"]*/com.android.tools.build:gradle:8.5.2/' android/build.gradle || true
+            fi
+          fi
+          mkdir -p android/gradle/wrapper
+          {
+            echo "distributionBase=GRADLE_USER_HOME"
+            echo "distributionPath=wrapper/dists"
+            echo "zipStoreBase=GRADLE_USER_HOME"
+            echo "zipStorePath=wrapper/dists"
+            echo "distributionUrl=https://services.gradle.org/distributions/gradle-8.11.1-bin.zip"
+          } > android/gradle/wrapper/gradle-wrapper.properties
+          touch android/gradle.properties
+          if ! grep -q 'org.gradle.jvmargs' android/gradle.properties; then
+            echo 'org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8' >> android/gradle.properties
+          fi
+      - name: Flutter pub get
+        script: |
+          cd "$PUBROOT"
+          flutter pub get
+      - name: Build APK split per ABI
+        script: |
+          set -e
+          cd "$PUBROOT"
+          flutter build apk --release --split-per-abi
+          mkdir -p "$CM_BUILD_DIR/apk"
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk "$CM_BUILD_DIR/apk/app-armeabi-v7a-release.apk" || true
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk "$CM_BUILD_DIR/apk/app-arm64-v8a-release.apk" || true
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk "$CM_BUILD_DIR/apk/app-x86_64-release.apk" || true
+    artifacts:
+      - "$CM_BUILD_DIR/apk/*.apk"
