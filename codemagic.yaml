@@ -3,8 +3,8 @@ workflows:
     name: Flutter APK from ZIP
     max_build_duration: 60
     environment:
-      flutter: stable         # Codemagic pakai stable; cukup untuk APK
-      java: 17               # kompatibel AGP 8.x
+      flutter: stable
+      java: 17
       vars:
         ZIP_NAME: app.zip
         FLUTTER_VERSION: "3.24.0"
@@ -18,8 +18,6 @@ workflows:
       - name: Ensure Flutter version
         script: |
           flutter --version
-          # butuh versi spesifik? aktifkan baris ini:
-          # flutter version $FLUTTER_VERSION || true
 
       - name: Find & unzip project ZIP
         script: |
@@ -37,7 +35,6 @@ workflows:
           echo "Using ZIP: $ZIP"
           unzip -q "$ZIP" -d extracted
 
-          # Resolve PUBROOT (folder berisi pubspec.yaml)
           if [ -f "extracted/pubspec.yaml" ]; then
             PUBROOT="extracted"
           else
@@ -66,7 +63,6 @@ workflows:
           cd "$PUBROOT"
           echo "🔧 Patching Kotlin & AGP…"
 
-          # Root build.gradle: kotlin + AGP (BSD-sed safe)
           if [ -f android/build.gradle ]; then
             if grep -q 'ext.kotlin_version' android/build.gradle; then
               sed -i.bak 's/ext.kotlin_version *= *".*"/ext.kotlin_version = "1.9.24"/' android/build.gradle || true
@@ -74,6 +70,33 @@ workflows:
             if grep -q 'com.android.tools.build:gradle' android/build.gradle; then
               sed -i.bak 's/com\.android\.tools\.build:gradle:[^"]*/com.android.tools.build:gradle:8.5.2/' android/build.gradle || true
             fi
+          fi
+
+          echo "distributionBase=GRADLE_USER_HOME" > android/gradle/wrapper/gradle-wrapper.properties
+          echo "distributionPath=wrapper/dists" >> android/gradle/wrapper/gradle-wrapper.properties
+          echo "zipStoreBase=GRADLE_USER_HOME" >> android/gradle/wrapper/gradle-wrapper.properties
+          echo "zipStorePath=wrapper/dists" >> android/gradle/wrapper/gradle-wrapper.properties
+          echo "distributionUrl=https://services.gradle.org/distributions/gradle-8.5-bin.zip" >> android/gradle/wrapper/gradle-wrapper.properties
+
+          touch android/gradle.properties
+          if ! grep -q 'org.gradle.jvmargs' android/gradle.properties; then
+            echo 'org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8' >> android/gradle.properties
+          fi
+
+      - name: Flutter pub get
+        script: |
+          cd "$PUBROOT"
+          flutter pub get
+
+      - name: Build APK (release)
+        script: |
+          set -e
+          cd "$PUBROOT"
+          flutter build apk --release
+          cp build/app/outputs/flutter-apk/app-release.apk "$CM_BUILD_DIR/app-release.apk"
+
+    artifacts:
+      - $CM_BUILD_DIR/app-release.apk            fi
           fi
 
           # Gradle wrapper → 8.5 (tulis ulang langsung, hindari sed error)
